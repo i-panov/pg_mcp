@@ -12,3 +12,6 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 figment = { version = "0.10", features = ["env"] }
+
+[dev-dependencies]
+uuid = { version = "1", features = ["v4"] }
