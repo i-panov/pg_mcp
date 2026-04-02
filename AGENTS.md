@@ -21,16 +21,22 @@ and `sqlx` with `PgPool`. Configuration via `figment` from `.env` or environment
 
 ```
 src/
-  main.rs        — entry point, MCP server bootstrap, tool handlers
-  config.rs      — figment-based Config (DATABASE_URL, DEFAULT_SCHEMA)
-  error.rs       — thiserror AppError enum
-  state.rs       — AppState { pool, default_schema }
+  lib.rs         — public library: handler functions, parse_args, row_to_json_value, sanitize_sql_error
+  main.rs        — entry point, PgMcpHandler (ServerHandler impl), MCP server bootstrap
+  config.rs      — figment-based Config (DATABASE_URL, DEFAULT_SCHEMA, PERMISSION_MODE)
+  error.rs       — thiserror AppError enum (currently unused by handlers)
+  state.rs       — AppState { pool, default_schema, permission_mode }
   tools/         — MCP tool definitions (one struct per tool via mcp_tool macro)
     mod.rs       — re-exports all tools
     execute_sql.rs
     execute_query.rs
     schema.rs    — all schema-introspection tools
+tests/
+  integration.rs — podman-based integration tests
 ```
+
+Handler logic lives in `lib.rs` so it's importable from integration tests.
+`main.rs` only contains `PgMcpHandler` (permission gating + arg parsing) and server bootstrap.
 
 ## Permission Modes
 
@@ -93,8 +99,9 @@ pub struct MyTool {
 ### Error Handling
 - Use `thiserror` for `AppError` enum; never `anyhow` in library/tool code
 - `#[from]` for automatic conversion from `sqlx::Error`
-- Propagate `Result<T, AppError>` through handler
-- MCP handler errors go through `CallToolError::new` or `CallToolError::unknown_tool`
+- Handler errors go through `CallToolError::new` with local error types (`ArgsError`, `SqlError`)
+- MCP tool visibility gated by `CallToolError::unknown_tool`
+- SQL errors are sanitized via `sanitize_sql_error` to strip connection strings (password leak prevention)
 
 ### Async
 - All I/O functions are `async fn`
@@ -106,6 +113,7 @@ pub struct MyTool {
 - `figment` reads from env vars (`.env` or process env)
 - `Config` struct derives `Deserialize`; fields use `#[serde(default)]`
 - Never `panic!` on missing config — return `Err` early
+- `PERMISSION_MODE` is case-insensitive (accepts `restricted`, `RESTRICTED`, `Unrestricted`, etc.)
 
 ### Formatting
 - 4-space indent, no tabs

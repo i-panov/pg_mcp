@@ -62,4 +62,16 @@ The server communicates over stdio (MCP protocol).
 | `readonly` | ❌ | ✅ | ✅ |
 | `restricted` | ❌ | ❌ | ✅ |
 
-Default: `restricted`. Set via `PERMISSION_MODE` env var.
+Default: `restricted`. Set via `PERMISSION_MODE` env var (case-insensitive).
+
+## Query Behavior
+
+**`execute_sql`**: Executes arbitrary SQL. Returns error on failure.
+
+**`execute_query`**: Wraps the query in a `READ ONLY` transaction. Column values are serialized with type awareness: `bool`, `int2/int4/int8`, `float4/float8`, `numeric`, `json/jsonb` are preserved as their native JSON types. Other types are returned as strings.
+
+## Security
+
+- SQL errors are sanitized to strip connection strings (prevents password leaks via `sqlx::Error`).
+- `execute_sql` is only available in `unrestricted` mode.
+- `execute_query` is blocked in `restricted` mode.
