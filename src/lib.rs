@@ -5,8 +5,9 @@ pub mod tools;
 
 use rust_mcp_sdk::schema::schema_utils::CallToolError;
 use rust_mcp_sdk::schema::*;
-use sqlx::{Column, Row};
+use sqlx::{Column, Row, TypeInfo};
 use state::AppState;
+use std::str::FromStr;
 use tools::*;
 
 pub fn parse_args<T: for<'de> serde::Deserialize<'de>>(
@@ -17,6 +18,93 @@ pub fn parse_args<T: for<'de> serde::Deserialize<'de>>(
         .ok_or_else(|| CallToolError::new(ArgsError("Missing arguments".to_string())))?;
     serde_json::from_value(serde_json::Value::Object(args.clone()))
         .map_err(|e| CallToolError::new(ArgsError(format!("Invalid arguments: {}", e))))
+}
+
+fn row_to_json_value(
+    row: &sqlx::postgres::PgRow,
+    i: usize,
+    col: &sqlx::postgres::PgColumn,
+) -> serde_json::Value {
+    use sqlx::ValueRef;
+
+    let raw = match row.try_get_raw(i) {
+        Ok(v) => v,
+        Err(_) => return serde_json::Value::Null,
+    };
+    if raw.is_null() {
+        return serde_json::Value::Null;
+    }
+
+    let type_name = col.type_info().name().to_uppercase();
+    let type_str = type_name.as_str();
+
+    match type_str {
+        "BOOL" => row
+            .try_get::<bool, _>(i)
+            .ok()
+            .map(serde_json::Value::from)
+            .unwrap_or(serde_json::Value::Null),
+        "INT2" => row
+            .try_get::<i16, _>(i)
+            .ok()
+            .map(|v| serde_json::Value::from(v as i64))
+            .unwrap_or(serde_json::Value::Null),
+        "INT4" => row
+            .try_get::<i32, _>(i)
+            .ok()
+            .map(|v| serde_json::Value::from(v as i64))
+            .unwrap_or(serde_json::Value::Null),
+        "INT8" => row
+            .try_get::<i64, _>(i)
+            .ok()
+            .map(serde_json::Value::from)
+            .unwrap_or(serde_json::Value::Null),
+        "FLOAT4" => row
+            .try_get::<f32, _>(i)
+            .ok()
+            .map(|v| serde_json::Value::from(v as f64))
+            .unwrap_or(serde_json::Value::Null),
+        "FLOAT8" => row
+            .try_get::<f64, _>(i)
+            .ok()
+            .map(serde_json::Value::from)
+            .unwrap_or(serde_json::Value::Null),
+        "NUMERIC" => row
+            .try_get::<String, _>(i)
+            .ok()
+            .map(|s| {
+                serde_json::Number::from_str(&s)
+                    .map(serde_json::Value::Number)
+                    .unwrap_or(serde_json::Value::String(s))
+            })
+            .unwrap_or(serde_json::Value::Null),
+        "JSON" | "JSONB" => row
+            .try_get::<serde_json::Value, _>(i)
+            .ok()
+            .unwrap_or(serde_json::Value::Null),
+        _ => row
+            .try_get::<Option<String>, _>(i)
+            .ok()
+            .flatten()
+            .map(serde_json::Value::from)
+            .unwrap_or(serde_json::Value::Null),
+    }
+}
+
+fn sanitize_sql_error(e: &sqlx::Error) -> String {
+    let msg = format!("{}", e);
+    if msg.contains("postgres://") || msg.contains("postgresql://") {
+        let re_match = msg
+            .find("postgres://")
+            .or_else(|| msg.find("postgresql://"));
+        if let Some(pos) = re_match {
+            let before = &msg[..pos];
+            let after = &msg[pos..];
+            let clean = after.split('/').skip(3).collect::<Vec<_>>().join("/");
+            return format!("{}<connection redacted>/{}", before, clean);
+        }
+    }
+    msg
 }
 
 #[derive(Debug)]
@@ -30,22 +118,32 @@ impl std::fmt::Display for ArgsError {
 
 impl std::error::Error for ArgsError {}
 
+#[derive(Debug)]
+struct SqlError(String);
+
+impl std::fmt::Display for SqlError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::error::Error for SqlError {}
+
 pub async fn handle_execute_sql(
     state: &AppState,
     args: &ExecuteSqlTool,
 ) -> std::result::Result<CallToolResult, CallToolError> {
-    match sqlx::query(&args.sql).execute(&state.pool).await {
-        Ok(result) => Ok(CallToolResult::text_content(vec![
-            format!(
-                "Query executed successfully. Rows affected: {}",
-                result.rows_affected()
-            )
-            .into(),
-        ])),
-        Err(e) => Ok(CallToolResult::text_content(vec![
-            format!("Error: {}", e).into(),
-        ])),
-    }
+    let result = sqlx::query(&args.sql)
+        .execute(&state.pool)
+        .await
+        .map_err(|e| CallToolError::new(SqlError(sanitize_sql_error(&e))))?;
+    Ok(CallToolResult::text_content(vec![
+        format!(
+            "Query executed successfully. Rows affected: {}",
+            result.rows_affected()
+        )
+        .into(),
+    ]))
 }
 
 pub async fn handle_execute_query(
@@ -59,37 +157,33 @@ pub async fn handle_execute_query(
         .await
         .map_err(CallToolError::new)?;
 
-    match sqlx::query(&args.sql).fetch_all(&mut *tx).await {
+    let rows = match sqlx::query(&args.sql).fetch_all(&mut *tx).await {
         Ok(rows) => {
             let _ = tx.rollback().await;
-            if rows.is_empty() {
-                return Ok(CallToolResult::text_content(vec!["0 rows returned".into()]));
-            }
-            let mut results: Vec<serde_json::Value> = Vec::new();
-            for row in &rows {
-                let mut map = serde_json::Map::new();
-                let columns = row.columns();
-                for (i, col) in columns.iter().enumerate() {
-                    let value: serde_json::Value = row
-                        .try_get::<Option<String>, _>(i)
-                        .ok()
-                        .flatten()
-                        .map(serde_json::Value::from)
-                        .unwrap_or(serde_json::Value::Null);
-                    map.insert(col.name().to_string(), value);
-                }
-                results.push(serde_json::Value::Object(map));
-            }
-            let json = serde_json::to_string_pretty(&results).unwrap_or_default();
-            Ok(CallToolResult::text_content(vec![json.into()]))
+            rows
         }
         Err(e) => {
             let _ = tx.rollback().await;
-            Ok(CallToolResult::text_content(vec![
-                format!("Query error: {}", e).into(),
-            ]))
+            return Err(CallToolError::new(SqlError(sanitize_sql_error(&e))));
         }
+    };
+
+    if rows.is_empty() {
+        return Ok(CallToolResult::text_content(vec!["0 rows returned".into()]));
     }
+
+    let mut results: Vec<serde_json::Value> = Vec::new();
+    for row in &rows {
+        let mut map = serde_json::Map::new();
+        let columns = row.columns();
+        for (i, col) in columns.iter().enumerate() {
+            let value = row_to_json_value(row, i, col);
+            map.insert(col.name().to_string(), value);
+        }
+        results.push(serde_json::Value::Object(map));
+    }
+    let json = serde_json::to_string_pretty(&results).unwrap_or_default();
+    Ok(CallToolResult::text_content(vec![json.into()]))
 }
 
 pub async fn handle_list_schemas(

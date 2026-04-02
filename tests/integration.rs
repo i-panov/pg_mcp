@@ -16,7 +16,13 @@ impl TestContainer {
         let name = format!("pg_mcp_test_{}", uuid::Uuid::new_v4().simple());
 
         // Pick a random port in high range
-        let port = 50000 + (uuid::Uuid::new_v4().as_bytes()[0] as u16 % 10000);
+        let port = 50000
+            + (uuid::Uuid::new_v4().as_bytes()[0..2]
+                .iter()
+                .enumerate()
+                .map(|(i, b)| (*b as u16) << (8 * i))
+                .sum::<u16>()
+                % 10000);
 
         // Pull and run postgres container
         let output = Command::new("podman")
@@ -45,6 +51,7 @@ impl TestContainer {
         let id = String::from_utf8_lossy(&output.stdout).trim().to_string();
 
         // Wait for postgres to be ready
+        let mut ready = false;
         for _ in 0..30 {
             std::thread::sleep(Duration::from_secs(1));
             let check = Command::new("podman")
@@ -52,9 +59,16 @@ impl TestContainer {
                 .output();
             if let Ok(result) = check {
                 if result.status.success() {
+                    ready = true;
                     break;
                 }
             }
+        }
+        if !ready {
+            panic!(
+                "PostgreSQL container {} did not become ready within 30 seconds",
+                id
+            );
         }
 
         let url = format!("postgres://postgres:postgres@127.0.0.1:{}/postgres", port);
@@ -125,9 +139,7 @@ async fn test_execute_query_readonly_error() {
         sql: "INSERT INTO test_insert DEFAULT VALUES".to_string(),
     };
     let result = handle_execute_query(&state, &args).await;
-    assert!(result.is_ok()); // Returns Ok with error text
-    let text = extract_text(&result.unwrap());
-    assert!(text.contains("error") || text.contains("Error"));
+    assert!(result.is_err()); // READ ONLY transaction rejects writes
 }
 
 #[tokio::test]
@@ -135,9 +147,8 @@ async fn test_permission_mode_restricted() {
     let container = TestContainer::new();
     let state = create_app_state(&container.url, PermissionMode::Restricted).await;
 
-    // Note: Permission checks are in PgMcpHandler, not in handle_* functions
-    // So we test that schema tools work in restricted mode
-
+    // Permission enforcement is in PgMcpHandler, not in handle_* functions.
+    // Here we just verify that schema tools work with any permission mode.
     let result = handle_list_tables(&state, None).await;
     assert!(result.is_ok());
 }

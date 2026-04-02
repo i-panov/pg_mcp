@@ -1,7 +1,6 @@
 use thiserror::Error;
 
 #[derive(Debug, Error)]
-#[allow(dead_code)]
 pub enum AppError {
     #[error("Database connection failed: {0}")]
     Connection(#[from] sqlx::Error),

@@ -1,12 +1,29 @@
 use figment::{Figment, providers::Env};
 use serde::Deserialize;
 
-#[derive(Debug, Clone, Deserialize, PartialEq)]
-#[serde(rename_all = "lowercase")]
+#[derive(Debug, Clone, PartialEq)]
 pub enum PermissionMode {
     Unrestricted,
     Readonly,
     Restricted,
+}
+
+impl<'de> Deserialize<'de> for PermissionMode {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        match s.to_lowercase().as_str() {
+            "unrestricted" => Ok(PermissionMode::Unrestricted),
+            "readonly" | "read_only" => Ok(PermissionMode::Readonly),
+            "restricted" => Ok(PermissionMode::Restricted),
+            _ => Err(serde::de::Error::unknown_variant(
+                &s,
+                &["unrestricted", "readonly", "restricted"],
+            )),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
