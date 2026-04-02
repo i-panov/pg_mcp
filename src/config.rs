@@ -1,7 +1,8 @@
 use figment::{providers::Env, Figment};
 use serde::Deserialize;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
 pub enum PermissionMode {
     Unrestricted,
     Readonly,
@@ -14,7 +15,6 @@ pub struct Config {
     #[serde(default = "default_schema")]
     pub default_schema: String,
     #[serde(default = "default_permission_mode")]
-    #[allow(dead_code)]
     pub permission_mode: PermissionMode,
 }
 

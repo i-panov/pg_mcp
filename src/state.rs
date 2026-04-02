@@ -1,10 +1,11 @@
-use crate::config::Config;
+use crate::config::{Config, PermissionMode};
 use sqlx::postgres::PgPool;
 
 #[derive(Clone, Debug)]
 pub struct AppState {
     pub pool: PgPool,
     pub default_schema: String,
+    pub permission_mode: PermissionMode,
 }
 
 impl AppState {
@@ -13,6 +14,7 @@ impl AppState {
         Ok(Self {
             pool,
             default_schema: config.default_schema,
+            permission_mode: config.permission_mode,
         })
     }
 }

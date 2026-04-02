@@ -14,7 +14,7 @@ use rust_mcp_sdk::{McpServer, StdioTransport, TransportOptions};
 use sqlx::{Column, Row};
 use std::sync::Arc;
 
-use config::load_config;
+use config::{load_config, PermissionMode};
 use state::AppState;
 use tools::*;
 
@@ -61,12 +61,19 @@ impl ServerHandler for PgMcpHandler {
         params: CallToolRequestParams,
         _runtime: Arc<dyn McpServer>,
     ) -> std::result::Result<CallToolResult, CallToolError> {
+        // Check permission mode for dangerous tools
         match params.name.as_str() {
             "execute_sql" => {
+                if self.state.permission_mode != PermissionMode::Unrestricted {
+                    return Err(CallToolError::unknown_tool(params.name));
+                }
                 let args = parse_args::<ExecuteSqlTool>(&params.arguments)?;
                 handle_execute_sql(&self.state, &args).await
             }
             "execute_query" => {
+                if self.state.permission_mode == PermissionMode::Restricted {
+                    return Err(CallToolError::unknown_tool(params.name));
+                }
                 let args = parse_args::<ExecuteQueryTool>(&params.arguments)?;
                 handle_execute_query(&self.state, &args).await
             }
