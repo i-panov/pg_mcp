@@ -88,6 +88,7 @@ async fn create_app_state(url: &str, mode: PermissionMode) -> AppState {
         database_url: url.to_string(),
         default_schema: "public".to_string(),
         permission_mode: mode,
+        max_connections: 5,
     };
     AppState::new(config).await.unwrap()
 }
@@ -295,4 +296,102 @@ fn extract_text(result: &rust_mcp_sdk::schema::CallToolResult) -> String {
             }
         })
         .unwrap_or_default()
+}
+
+#[tokio::test]
+async fn test_get_view_definition_not_found() {
+    let container = TestContainer::new();
+    let state = create_app_state(&container.url, PermissionMode::Unrestricted).await;
+
+    let result = handle_get_view_definition(&state, "nonexistent_view", None).await;
+    assert!(result.is_ok());
+    let text = extract_text(&result.unwrap());
+    assert!(text.contains("not found"));
+}
+
+#[tokio::test]
+async fn test_get_function_definition_not_found() {
+    let container = TestContainer::new();
+    let state = create_app_state(&container.url, PermissionMode::Unrestricted).await;
+
+    let result = handle_get_function_definition(&state, "nonexistent_function", None).await;
+    assert!(result.is_ok());
+    let text = extract_text(&result.unwrap());
+    assert!(text.contains("not found"));
+}
+
+#[tokio::test]
+async fn test_get_table_structure_not_found() {
+    let container = TestContainer::new();
+    let state = create_app_state(&container.url, PermissionMode::Unrestricted).await;
+
+    let result = handle_get_table_structure(&state, "nonexistent_table", None).await;
+    assert!(result.is_ok());
+    let text = extract_text(&result.unwrap());
+    assert!(text.contains("nonexistent_table"));
+}
+
+#[tokio::test]
+async fn test_list_indexes_not_found() {
+    let container = TestContainer::new();
+    let state = create_app_state(&container.url, PermissionMode::Unrestricted).await;
+
+    let result = handle_list_indexes(&state, "nonexistent_table", None).await;
+    assert!(result.is_ok());
+    let text = extract_text(&result.unwrap());
+    assert!(text == "[]" || text.is_empty());
+}
+
+#[tokio::test]
+async fn test_execute_query_empty_result() {
+    let container = TestContainer::new();
+    let state = create_app_state(&container.url, PermissionMode::Unrestricted).await;
+
+    let args = ExecuteSqlTool {
+        sql: "CREATE TABLE test_empty (id SERIAL PRIMARY KEY)".to_string(),
+    };
+    handle_execute_sql(&state, &args).await.unwrap();
+
+    let args = ExecuteQueryTool {
+        sql: "SELECT * FROM test_empty".to_string(),
+    };
+    let result = handle_execute_query(&state, &args).await;
+    assert!(result.is_ok());
+    let text = extract_text(&result.unwrap());
+    assert!(text.contains("0 rows returned") || text == "[]");
+}
+
+#[tokio::test]
+async fn test_list_tables_empty() {
+    let container = TestContainer::new();
+    let state = create_app_state(&container.url, PermissionMode::Unrestricted).await;
+
+    let result = handle_list_tables(&state, None).await;
+    assert!(result.is_ok());
+    let text = extract_text(&result.unwrap());
+    assert!(text.contains("[]") || text.is_empty() || text.contains("pg_"));
+}
+
+#[tokio::test]
+async fn test_uuid_column() {
+    let container = TestContainer::new();
+    let state = create_app_state(&container.url, PermissionMode::Unrestricted).await;
+
+    let args = ExecuteSqlTool {
+        sql: "CREATE TABLE test_uuid (id UUID PRIMARY KEY DEFAULT gen_random_uuid())".to_string(),
+    };
+    handle_execute_sql(&state, &args).await.unwrap();
+
+    let args = ExecuteSqlTool {
+        sql: "INSERT INTO test_uuid (id) VALUES (gen_random_uuid())".to_string(),
+    };
+    handle_execute_sql(&state, &args).await.unwrap();
+
+    let args = ExecuteQueryTool {
+        sql: "SELECT id FROM test_uuid".to_string(),
+    };
+    let result = handle_execute_query(&state, &args).await;
+    assert!(result.is_ok());
+    let text = extract_text(&result.unwrap());
+    assert!(text.contains("uuid"));
 }

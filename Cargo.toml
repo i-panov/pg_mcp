@@ -7,11 +7,13 @@ edition = "2024"
 rust-mcp-sdk = "0.9"
 async-trait = "0.1"
 tokio = { version = "1", features = ["full"] }
-sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres"] }
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "time", "uuid"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 figment = { version = "0.10", features = ["env"] }
+regex = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
 
 [dev-dependencies]
 uuid = { version = "1", features = ["v4"] }

@@ -1,5 +1,4 @@
 pub mod config;
-pub mod error;
 pub mod state;
 pub mod tools;
 
@@ -82,6 +81,35 @@ fn row_to_json_value(
             .try_get::<serde_json::Value, _>(i)
             .ok()
             .unwrap_or(serde_json::Value::Null),
+        "DATE" | "TIME" | "TIMESTAMP" | "TIMESTAMPTZ" | "INTERVAL" => row
+            .try_get::<String, _>(i)
+            .ok()
+            .map(serde_json::Value::String)
+            .unwrap_or(serde_json::Value::Null),
+        "UUID" => row
+            .try_get::<uuid::Uuid, _>(i)
+            .ok()
+            .map(|v| serde_json::Value::String(v.to_string()))
+            .unwrap_or(serde_json::Value::Null),
+        "BYTEA" => row
+            .try_get::<Vec<u8>, _>(i)
+            .ok()
+            .map(|v| serde_json::Value::String(format!("<bytea {} bytes>", v.len())))
+            .unwrap_or(serde_json::Value::Null),
+        _ if type_str.starts_with('_') => row
+            .try_get::<Vec<Option<String>>, _>(i)
+            .ok()
+            .map(|arr| {
+                serde_json::Value::Array(
+                    arr.into_iter()
+                        .map(|opt| {
+                            opt.map(serde_json::Value::from)
+                                .unwrap_or(serde_json::Value::Null)
+                        })
+                        .collect(),
+                )
+            })
+            .unwrap_or(serde_json::Value::Null),
         _ => row
             .try_get::<Option<String>, _>(i)
             .ok()
@@ -92,17 +120,9 @@ fn row_to_json_value(
 }
 
 fn sanitize_sql_error(e: &sqlx::Error) -> String {
-    let msg = format!("{}", e);
-    if msg.contains("postgres://") || msg.contains("postgresql://") {
-        let re_match = msg
-            .find("postgres://")
-            .or_else(|| msg.find("postgresql://"));
-        if let Some(pos) = re_match {
-            let before = &msg[..pos];
-            let after = &msg[pos..];
-            let clean = after.split('/').skip(3).collect::<Vec<_>>().join("/");
-            return format!("{}<connection redacted>/{}", before, clean);
-        }
+    let msg = e.to_string();
+    if let Ok(re) = regex::Regex::new(r"(?i)(postgres://|postgresql://)[^:]+:[^@]+@") {
+        return re.replace_all(&msg, "$1<user>:<password>@").to_string();
     }
     msg
 }
@@ -266,7 +286,7 @@ pub async fn handle_list_materialized_views(
     Ok(CallToolResult::text_content(vec![json.into()]))
 }
 
-pub async fn handle_list_procedures(
+pub async fn handle_list_routines(
     state: &AppState,
     schema: Option<String>,
 ) -> std::result::Result<CallToolResult, CallToolError> {
@@ -472,7 +492,12 @@ pub async fn handle_get_function_definition(
 ) -> std::result::Result<CallToolResult, CallToolError> {
     let schema = schema.unwrap_or_else(|| state.default_schema.clone());
     let row = sqlx::query(
-        "SELECT pg_get_functiondef(p.oid) AS definition FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid WHERE n.nspname = $1 AND p.proname = $2 LIMIT 1"
+        "SELECT pg_get_functiondef(p.oid) AS definition \
+         FROM pg_proc p \
+         JOIN pg_namespace n ON p.pronamespace = n.oid \
+         WHERE n.nspname = $1 AND p.proname = $2 \
+         ORDER BY p.prokind DESC, p.oid \
+         LIMIT 1",
     )
     .bind(&schema)
     .bind(function)

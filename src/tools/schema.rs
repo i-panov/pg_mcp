@@ -39,11 +39,11 @@ pub struct ListMaterializedViewsTool {
 }
 
 #[mcp_tool(
-    name = "list_procedures",
-    description = "Returns functions/procedures in a schema"
+    name = "list_routines",
+    description = "Returns functions and procedures in a schema"
 )]
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
-pub struct ListProceduresTool {
+pub struct ListRoutinesTool {
     /// Schema name (uses DEFAULT_SCHEMA if not specified)
     pub schema: Option<String>,
 }

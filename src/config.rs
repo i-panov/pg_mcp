@@ -1,4 +1,5 @@
-use figment::{Figment, providers::Env};
+use figment::Figment;
+use figment::providers::Env;
 use serde::Deserialize;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -33,6 +34,8 @@ pub struct Config {
     pub default_schema: String,
     #[serde(default = "default_permission_mode")]
     pub permission_mode: PermissionMode,
+    #[serde(default = "default_max_connections", alias = "MAX_CONNECTIONS")]
+    pub max_connections: u32,
 }
 
 fn default_schema() -> String {
@@ -43,9 +46,13 @@ fn default_permission_mode() -> PermissionMode {
     PermissionMode::Restricted
 }
 
-pub fn load_config() -> Config {
+fn default_max_connections() -> u32 {
+    5
+}
+
+pub fn load_config() -> Result<Config, String> {
     Figment::new()
         .merge(Env::raw())
         .extract()
-        .expect("Failed to load config: DATABASE_URL must be set")
+        .map_err(|e| format!("Failed to load config: {}", e))
 }

@@ -38,7 +38,7 @@ impl ServerHandler for PgMcpHandler {
                 ListTablesTool::tool(),
                 ListViewsTool::tool(),
                 ListMaterializedViewsTool::tool(),
-                ListProceduresTool::tool(),
+                ListRoutinesTool::tool(),
                 ListTriggersTool::tool(),
                 ListIndexesTool::tool(),
                 GetTableStructureTool::tool(),
@@ -83,9 +83,9 @@ impl ServerHandler for PgMcpHandler {
                 let args = parse_args::<ListMaterializedViewsTool>(&params.arguments)?;
                 handle_list_materialized_views(&self.state, args.schema).await
             }
-            "list_procedures" => {
-                let args = parse_args::<ListProceduresTool>(&params.arguments)?;
-                handle_list_procedures(&self.state, args.schema).await
+            "list_routines" => {
+                let args = parse_args::<ListRoutinesTool>(&params.arguments)?;
+                handle_list_routines(&self.state, args.schema).await
             }
             "list_triggers" => {
                 let args = parse_args::<ListTriggersTool>(&params.arguments)?;
@@ -114,7 +114,8 @@ impl ServerHandler for PgMcpHandler {
 
 #[tokio::main]
 async fn main() -> SdkResult<()> {
-    let config = load_config();
+    let config =
+        load_config().map_err(|e| SdkError::new(SdkErrorCodes::INVALID_PARAMS, e, None))?;
     let state = AppState::new(config)
         .await
         .map_err(|e| SdkError::new(SdkErrorCodes::INTERNAL_ERROR, e.to_string(), None))?;
