@@ -557,3 +557,139 @@ async fn test_parse_args_invalid_argument() {
     let result = parse_args::<ExecuteSqlTool>(&Some(args));
     assert!(result.is_err());
 }
+
+#[tokio::test]
+async fn test_explain_query() {
+    let container = TestContainer::new();
+    let state = create_app_state(&container.url, PermissionMode::Unrestricted).await;
+
+    let args = ExecuteSqlTool {
+        sql: "CREATE TABLE test_explain (id SERIAL PRIMARY KEY, name TEXT)".to_string(),
+    };
+    handle_execute_sql(&state, &args).await.unwrap();
+
+    let args = ExplainQueryTool {
+        sql: "SELECT * FROM test_explain WHERE name = 'test'".to_string(),
+    };
+    let result = handle_explain_query(&state, &args).await;
+    assert!(result.is_ok());
+    let text = extract_text(&result.unwrap());
+    assert!(text.contains("Seq Scan") || text.contains("Index"));
+}
+
+#[tokio::test]
+async fn test_get_table_size() {
+    let container = TestContainer::new();
+    let state = create_app_state(&container.url, PermissionMode::Unrestricted).await;
+
+    let args = ExecuteSqlTool {
+        sql: "CREATE TABLE test_size (id SERIAL PRIMARY KEY, data TEXT)".to_string(),
+    };
+    handle_execute_sql(&state, &args).await.unwrap();
+
+    let result = handle_get_table_size(&state, "test_size", None).await;
+    assert!(result.is_ok());
+    let text = extract_text(&result.unwrap());
+    assert!(text.contains("table_size_bytes"));
+    assert!(text.contains("indexes_size_bytes"));
+    assert!(text.contains("total_size"));
+}
+
+#[tokio::test]
+async fn test_list_extensions() {
+    let container = TestContainer::new();
+    let state = create_app_state(&container.url, PermissionMode::Unrestricted).await;
+
+    let result = handle_list_extensions(&state).await;
+    assert!(result.is_ok());
+    let text = extract_text(&result.unwrap());
+    assert!(text.contains("plpgsql"));
+}
+
+#[tokio::test]
+async fn test_list_sequences() {
+    let container = TestContainer::new();
+    let state = create_app_state(&container.url, PermissionMode::Unrestricted).await;
+
+    let args = ExecuteSqlTool {
+        sql: "CREATE TABLE test_seq (id SERIAL PRIMARY KEY)".to_string(),
+    };
+    handle_execute_sql(&state, &args).await.unwrap();
+
+    let result = handle_list_sequences(&state, None).await;
+    assert!(result.is_ok());
+    let text = extract_text(&result.unwrap());
+    assert!(text.contains("test_seq_id_seq"));
+}
+
+#[tokio::test]
+async fn test_get_table_row_count_exact() {
+    let container = TestContainer::new();
+    let state = create_app_state(&container.url, PermissionMode::Unrestricted).await;
+
+    let args = ExecuteSqlTool {
+        sql: "CREATE TABLE test_count (id SERIAL PRIMARY KEY)".to_string(),
+    };
+    handle_execute_sql(&state, &args).await.unwrap();
+
+    let args = ExecuteSqlTool {
+        sql: "INSERT INTO test_count SELECT FROM generate_series(1, 3)".to_string(),
+    };
+    handle_execute_sql(&state, &args).await.unwrap();
+
+    let args = GetTableRowCountTool {
+        table: "test_count".to_string(),
+        schema: None,
+        approximate: Some(false),
+    };
+    let result = handle_get_table_row_count(&state, &args.table, args.schema, false).await;
+    assert!(result.is_ok());
+    let text = extract_text(&result.unwrap());
+    assert!(text.contains("3"));
+    assert!(text.contains("\"approximate\": false"));
+}
+
+#[tokio::test]
+async fn test_get_table_row_count_approximate() {
+    let container = TestContainer::new();
+    let state = create_app_state(&container.url, PermissionMode::Unrestricted).await;
+
+    let args = ExecuteSqlTool {
+        sql: "CREATE TABLE test_approx (id SERIAL PRIMARY KEY)".to_string(),
+    };
+    handle_execute_sql(&state, &args).await.unwrap();
+
+    let args = GetTableRowCountTool {
+        table: "test_approx".to_string(),
+        schema: None,
+        approximate: Some(true),
+    };
+    let result = handle_get_table_row_count(&state, &args.table, args.schema, true).await;
+    assert!(result.is_ok());
+    let text = extract_text(&result.unwrap());
+    assert!(text.contains("\"approximate\": true"));
+}
+
+#[tokio::test]
+async fn test_list_active_queries() {
+    let container = TestContainer::new();
+    let state = create_app_state(&container.url, PermissionMode::Unrestricted).await;
+
+    let result = handle_list_active_queries(&state).await;
+    assert!(result.is_ok());
+    // May return "No active queries" or actual queries
+    let text = extract_text(&result.unwrap());
+    assert!(text.contains("No active queries") || text.contains("["));
+}
+
+#[tokio::test]
+async fn test_list_locks() {
+    let container = TestContainer::new();
+    let state = create_app_state(&container.url, PermissionMode::Unrestricted).await;
+
+    let result = handle_list_locks(&state).await;
+    assert!(result.is_ok());
+    // May return "No locks found" or actual locks
+    let text = extract_text(&result.unwrap());
+    assert!(text.contains("No locks found") || text.contains("["));
+}

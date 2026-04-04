@@ -104,3 +104,32 @@ pub struct GetFunctionDefinitionTool {
     /// Schema name (uses DEFAULT_SCHEMA if not specified)
     pub schema: Option<String>,
 }
+
+#[mcp_tool(
+    name = "get_table_size",
+    description = "Returns the size of a table including its indexes, in bytes and human-readable format."
+)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct GetTableSizeTool {
+    /// Table name
+    pub table: String,
+    /// Schema name (uses DEFAULT_SCHEMA if not specified)
+    pub schema: Option<String>,
+}
+
+#[mcp_tool(
+    name = "list_extensions",
+    description = "Returns all installed PostgreSQL extensions."
+)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct ListExtensionsTool {}
+
+#[mcp_tool(
+    name = "list_sequences",
+    description = "Returns sequences in a schema (or all schemas if schema not specified)."
+)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct ListSequencesTool {
+    /// Schema name (uses DEFAULT_SCHEMA if not specified)
+    pub schema: Option<String>,
+}

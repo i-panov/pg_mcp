@@ -639,3 +639,253 @@ pub async fn handle_get_function_definition(
     let json = serde_json::to_string_pretty(&result).unwrap_or_default();
     Ok(CallToolResult::text_content(vec![json.into()]))
 }
+
+pub async fn handle_explain_query(
+    state: &AppState,
+    args: &ExplainQueryTool,
+) -> std::result::Result<CallToolResult, CallToolError> {
+    let explain_sql = format!("EXPLAIN (FORMAT JSON) {}", args.sql);
+    let rows = sqlx::query(&explain_sql)
+        .fetch_all(&state.pool)
+        .await
+        .map_err(|e| CallToolError::new(SqlError(sanitize_sql_error(&e))))?;
+
+    let plans: Vec<serde_json::Value> = rows
+        .iter()
+        .filter_map(|r| r.try_get::<serde_json::Value, _>(0).ok())
+        .collect();
+
+    let json = serde_json::to_string_pretty(&plans).unwrap_or_default();
+    Ok(CallToolResult::text_content(vec![json.into()]))
+}
+
+pub async fn handle_get_table_size(
+    state: &AppState,
+    table: &str,
+    schema: Option<String>,
+) -> std::result::Result<CallToolResult, CallToolError> {
+    let schema = schema.unwrap_or_else(|| state.default_schema.clone());
+    let qualified = format!("{}.{}", schema, table);
+    let row = sqlx::query(
+        "SELECT \
+            pg_relation_size($1::regclass) AS table_size, \
+            pg_indexes_size($1::regclass) AS indexes_size, \
+            pg_total_relation_size($1::regclass) AS total_size, \
+            pg_size_pretty(pg_relation_size($1::regclass)) AS table_size_pretty, \
+            pg_size_pretty(pg_indexes_size($1::regclass)) AS indexes_size_pretty, \
+            pg_size_pretty(pg_total_relation_size($1::regclass)) AS total_size_pretty",
+    )
+    .bind(&qualified)
+    .fetch_one(&state.pool)
+    .await
+    .map_err(|e| CallToolError::new(SqlError(sanitize_sql_error(&e))))?;
+
+    let result = serde_json::json!({
+        "table": table,
+        "schema": schema,
+        "table_size_bytes": row.try_get::<Option<i64>, _>(0).ok().flatten().unwrap_or(0),
+        "indexes_size_bytes": row.try_get::<Option<i64>, _>(1).ok().flatten().unwrap_or(0),
+        "total_size_bytes": row.try_get::<Option<i64>, _>(2).ok().flatten().unwrap_or(0),
+        "table_size": row.try_get::<Option<String>, _>(3).ok().flatten().unwrap_or_default(),
+        "indexes_size": row.try_get::<Option<String>, _>(4).ok().flatten().unwrap_or_default(),
+        "total_size": row.try_get::<Option<String>, _>(5).ok().flatten().unwrap_or_default(),
+    });
+    let json = serde_json::to_string_pretty(&result).unwrap_or_default();
+    Ok(CallToolResult::text_content(vec![json.into()]))
+}
+
+pub async fn handle_list_extensions(
+    state: &AppState,
+) -> std::result::Result<CallToolResult, CallToolError> {
+    let rows = sqlx::query(
+        "SELECT extname, extversion, extrelocatable, \
+                extnamespace::regnamespace AS schema_name \
+         FROM pg_extension ORDER BY extname",
+    )
+    .fetch_all(&state.pool)
+    .await
+    .map_err(CallToolError::new)?;
+
+    let result: Vec<serde_json::Value> = rows
+        .iter()
+        .map(|r| {
+            serde_json::json!({
+                "name": r.try_get::<String, _>(0).ok(),
+                "version": r.try_get::<String, _>(1).ok(),
+                "relocatable": r.try_get::<Option<bool>, _>(2).ok().flatten().unwrap_or(false),
+                "schema": r.try_get::<String, _>(3).ok(),
+            })
+        })
+        .collect();
+    let json = serde_json::to_string_pretty(&result).unwrap_or_default();
+    Ok(CallToolResult::text_content(vec![json.into()]))
+}
+
+pub async fn handle_list_sequences(
+    state: &AppState,
+    schema: Option<String>,
+) -> std::result::Result<CallToolResult, CallToolError> {
+    let schema = schema.unwrap_or_else(|| state.default_schema.clone());
+    let rows = sqlx::query(
+        "SELECT sequence_schema, sequence_name, data_type, \
+                start_value, minimum_value, maximum_value, increment \
+         FROM information_schema.sequences \
+         WHERE sequence_schema = $1 \
+         ORDER BY sequence_name",
+    )
+    .bind(&schema)
+    .fetch_all(&state.pool)
+    .await
+    .map_err(CallToolError::new)?;
+
+    let result: Vec<serde_json::Value> = rows
+        .iter()
+        .map(|r| {
+            serde_json::json!({
+                "schema": r.try_get::<String, _>(0).ok(),
+                "name": r.try_get::<String, _>(1).ok(),
+                "data_type": r.try_get::<String, _>(2).ok(),
+                "start_value": r.try_get::<Option<String>, _>(3).ok().flatten(),
+                "min_value": r.try_get::<Option<String>, _>(4).ok().flatten(),
+                "max_value": r.try_get::<Option<String>, _>(5).ok().flatten(),
+                "increment": r.try_get::<Option<String>, _>(6).ok().flatten(),
+            })
+        })
+        .collect();
+    let json = serde_json::to_string_pretty(&result).unwrap_or_default();
+    Ok(CallToolResult::text_content(vec![json.into()]))
+}
+
+pub async fn handle_get_table_row_count(
+    state: &AppState,
+    table: &str,
+    schema: Option<String>,
+    approximate: bool,
+) -> std::result::Result<CallToolResult, CallToolError> {
+    let schema = schema.unwrap_or_else(|| state.default_schema.clone());
+
+    if approximate {
+        let row = sqlx::query(
+            "SELECT reltuples::bigint AS estimate \
+             FROM pg_class c \
+             JOIN pg_namespace n ON c.relnamespace = n.oid \
+             WHERE n.nspname = $1 AND c.relname = $2",
+        )
+        .bind(&schema)
+        .bind(table)
+        .fetch_optional(&state.pool)
+        .await
+        .map_err(CallToolError::new)?;
+
+        match row {
+            Some(r) => {
+                let estimate: Option<i64> = r.try_get::<Option<i64>, _>(0).ok().flatten();
+                let result = serde_json::json!({
+                    "table": table,
+                    "schema": schema,
+                    "approximate": true,
+                    "count": estimate.unwrap_or(0),
+                });
+                let json = serde_json::to_string_pretty(&result).unwrap_or_default();
+                Ok(CallToolResult::text_content(vec![json.into()]))
+            }
+            None => Ok(CallToolResult::text_content(vec![
+                format!("Table '{}.{}' not found", schema, table).into(),
+            ])),
+        }
+    } else {
+        let qualified = format!("{}.{}", schema, table);
+        let row = sqlx::query(&format!("SELECT COUNT(*) AS count FROM {}", qualified))
+            .fetch_one(&state.pool)
+            .await
+            .map_err(|e| CallToolError::new(SqlError(sanitize_sql_error(&e))))?;
+
+        let count: i64 = row.try_get::<i64, _>(0).unwrap_or(0);
+        let result = serde_json::json!({
+            "table": table,
+            "schema": schema,
+            "approximate": false,
+            "count": count,
+        });
+        let json = serde_json::to_string_pretty(&result).unwrap_or_default();
+        Ok(CallToolResult::text_content(vec![json.into()]))
+    }
+}
+
+pub async fn handle_list_active_queries(
+    state: &AppState,
+) -> std::result::Result<CallToolResult, CallToolError> {
+    let rows = sqlx::query(
+        "SELECT pid, usename, datname, state, query, backend_start, query_start \
+         FROM pg_stat_activity \
+         WHERE state != 'idle' AND pid != pg_backend_pid() \
+         ORDER BY query_start",
+    )
+    .fetch_all(&state.pool)
+    .await
+    .map_err(CallToolError::new)?;
+
+    let result: Vec<serde_json::Value> = rows
+        .iter()
+        .map(|r| {
+            serde_json::json!({
+                "pid": r.try_get::<Option<i32>, _>(0).ok().flatten(),
+                "user": r.try_get::<Option<String>, _>(1).ok().flatten(),
+                "database": r.try_get::<Option<String>, _>(2).ok().flatten(),
+                "state": r.try_get::<Option<String>, _>(3).ok().flatten(),
+                "query": r.try_get::<Option<String>, _>(4).ok().flatten(),
+                "backend_start": r.try_get::<Option<String>, _>(5).ok().flatten(),
+                "query_start": r.try_get::<Option<String>, _>(6).ok().flatten(),
+            })
+        })
+        .collect();
+
+    if result.is_empty() {
+        return Ok(CallToolResult::text_content(vec![
+            "No active queries".into(),
+        ]));
+    }
+
+    let json = serde_json::to_string_pretty(&result).unwrap_or_default();
+    Ok(CallToolResult::text_content(vec![json.into()]))
+}
+
+pub async fn handle_list_locks(
+    state: &AppState,
+) -> std::result::Result<CallToolResult, CallToolError> {
+    let rows = sqlx::query(
+        "SELECT l.pid, l.mode, l.granted, l.locktype, \
+                c.relname AS table_name, a.query, a.usename, a.wait_event_type, a.wait_event \
+         FROM pg_locks l \
+         LEFT JOIN pg_class c ON l.relation = c.oid \
+         LEFT JOIN pg_stat_activity a ON l.pid = a.pid \
+         ORDER BY l.granted, l.pid",
+    )
+    .fetch_all(&state.pool)
+    .await
+    .map_err(CallToolError::new)?;
+
+    let result: Vec<serde_json::Value> = rows
+        .iter()
+        .map(|r| {
+            serde_json::json!({
+                "pid": r.try_get::<Option<i32>, _>(0).ok().flatten(),
+                "mode": r.try_get::<Option<String>, _>(1).ok().flatten(),
+                "granted": r.try_get::<Option<bool>, _>(2).ok().flatten(),
+                "locktype": r.try_get::<Option<String>, _>(3).ok().flatten(),
+                "table": r.try_get::<Option<String>, _>(4).ok().flatten(),
+                "query": r.try_get::<Option<String>, _>(5).ok().flatten(),
+                "user": r.try_get::<Option<String>, _>(6).ok().flatten(),
+                "wait_event_type": r.try_get::<Option<String>, _>(7).ok().flatten(),
+                "wait_event": r.try_get::<Option<String>, _>(8).ok().flatten(),
+            })
+        })
+        .collect();
+
+    if result.is_empty() {
+        return Ok(CallToolResult::text_content(vec!["No locks found".into()]));
+    }
+
+    let json = serde_json::to_string_pretty(&result).unwrap_or_default();
+    Ok(CallToolResult::text_content(vec![json.into()]))
+}

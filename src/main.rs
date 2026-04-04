@@ -44,6 +44,13 @@ impl ServerHandler for PgMcpHandler {
                 GetTableStructureTool::tool(),
                 GetViewDefinitionTool::tool(),
                 GetFunctionDefinitionTool::tool(),
+                ExplainQueryTool::tool(),
+                GetTableSizeTool::tool(),
+                ListExtensionsTool::tool(),
+                ListSequencesTool::tool(),
+                GetTableRowCountTool::tool(),
+                ListActiveQueriesTool::tool(),
+                ListLocksTool::tool(),
             ],
             meta: None,
             next_cursor: None,
@@ -107,6 +114,31 @@ impl ServerHandler for PgMcpHandler {
                 let args = parse_args::<GetFunctionDefinitionTool>(&params.arguments)?;
                 handle_get_function_definition(&self.state, &args.function, args.schema).await
             }
+            "explain_query" => {
+                let args = parse_args::<ExplainQueryTool>(&params.arguments)?;
+                handle_explain_query(&self.state, &args).await
+            }
+            "get_table_size" => {
+                let args = parse_args::<GetTableSizeTool>(&params.arguments)?;
+                handle_get_table_size(&self.state, &args.table, args.schema).await
+            }
+            "list_extensions" => handle_list_extensions(&self.state).await,
+            "list_sequences" => {
+                let args = parse_args::<ListSequencesTool>(&params.arguments)?;
+                handle_list_sequences(&self.state, args.schema).await
+            }
+            "get_table_row_count" => {
+                let args = parse_args::<GetTableRowCountTool>(&params.arguments)?;
+                handle_get_table_row_count(
+                    &self.state,
+                    &args.table,
+                    args.schema,
+                    args.approximate.unwrap_or(false),
+                )
+                .await
+            }
+            "list_active_queries" => handle_list_active_queries(&self.state).await,
+            "list_locks" => handle_list_locks(&self.state).await,
             _ => Err(CallToolError::unknown_tool(params.name)),
         }
     }
