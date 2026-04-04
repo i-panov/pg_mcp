@@ -34,7 +34,7 @@ pub struct Config {
     pub default_schema: String,
     #[serde(default = "default_permission_mode")]
     pub permission_mode: PermissionMode,
-    #[serde(default = "default_max_connections", alias = "MAX_CONNECTIONS")]
+    #[serde(default = "default_max_connections")]
     pub max_connections: u32,
 }
 
