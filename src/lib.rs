@@ -38,6 +38,13 @@ fn row_to_json_value(
     let type_name = col.type_info().name().to_uppercase();
     let type_str = type_name.as_str();
 
+    fn str_val(row: &sqlx::postgres::PgRow, i: usize) -> serde_json::Value {
+        row.try_get::<String, _>(i)
+            .ok()
+            .map(serde_json::Value::String)
+            .unwrap_or(serde_json::Value::Null)
+    }
+
     match type_str {
         "BOOL" => row
             .try_get::<bool, _>(i)
@@ -82,11 +89,6 @@ fn row_to_json_value(
             .try_get::<serde_json::Value, _>(i)
             .ok()
             .unwrap_or(serde_json::Value::Null),
-        "DATE" | "TIME" | "TIMESTAMP" | "TIMESTAMPTZ" | "INTERVAL" => row
-            .try_get::<String, _>(i)
-            .ok()
-            .map(serde_json::Value::String)
-            .unwrap_or(serde_json::Value::Null),
         "UUID" => row
             .try_get::<uuid::Uuid, _>(i)
             .ok()
@@ -97,40 +99,104 @@ fn row_to_json_value(
             .ok()
             .map(|v| serde_json::Value::String(format!("<bytea {} bytes>", v.len())))
             .unwrap_or(serde_json::Value::Null),
-        "MONEY" => row
-            .try_get::<String, _>(i)
+        "DATE" | "TIME" | "TIMESTAMP" | "TIMESTAMPTZ" | "INTERVAL" | "MONEY" | "INET" | "CIDR"
+        | "MACADDR" | "MACADDR8" | "TSVECTOR" | "TSQUERY" | "POINT" | "LINE" | "LSEG" | "BOX"
+        | "PATH" | "POLYGON" | "CIRCLE" | "INT4RANGE" | "INT8RANGE" | "NUMRANGE" | "TSRANGE"
+        | "TSTZRANGE" | "DATERANGE" | "XML" | "BIT" | "VARBIT" => str_val(row, i),
+        "_BOOL" => row
+            .try_get::<Vec<Option<bool>>, _>(i)
             .ok()
-            .map(serde_json::Value::String)
+            .map(|arr| {
+                serde_json::Value::Array(
+                    arr.into_iter()
+                        .map(|opt| {
+                            opt.map(serde_json::Value::from)
+                                .unwrap_or(serde_json::Value::Null)
+                        })
+                        .collect(),
+                )
+            })
             .unwrap_or(serde_json::Value::Null),
-        "INET" | "CIDR" | "MACADDR" | "MACADDR8" => row
-            .try_get::<String, _>(i)
+        "_INT2" => row
+            .try_get::<Vec<Option<i16>>, _>(i)
             .ok()
-            .map(serde_json::Value::String)
+            .map(|arr| {
+                serde_json::Value::Array(
+                    arr.into_iter()
+                        .map(|opt| {
+                            opt.map(|v| serde_json::Value::from(v as i64))
+                                .unwrap_or(serde_json::Value::Null)
+                        })
+                        .collect(),
+                )
+            })
             .unwrap_or(serde_json::Value::Null),
-        "TSVECTOR" | "TSQUERY" => row
-            .try_get::<String, _>(i)
+        "_INT4" => row
+            .try_get::<Vec<Option<i32>>, _>(i)
             .ok()
-            .map(serde_json::Value::String)
+            .map(|arr| {
+                serde_json::Value::Array(
+                    arr.into_iter()
+                        .map(|opt| {
+                            opt.map(|v| serde_json::Value::from(v as i64))
+                                .unwrap_or(serde_json::Value::Null)
+                        })
+                        .collect(),
+                )
+            })
             .unwrap_or(serde_json::Value::Null),
-        "POINT" | "LINE" | "LSEG" | "BOX" | "PATH" | "POLYGON" | "CIRCLE" => row
-            .try_get::<String, _>(i)
+        "_INT8" => row
+            .try_get::<Vec<Option<i64>>, _>(i)
             .ok()
-            .map(serde_json::Value::String)
+            .map(|arr| {
+                serde_json::Value::Array(
+                    arr.into_iter()
+                        .map(|opt| {
+                            opt.map(serde_json::Value::from)
+                                .unwrap_or(serde_json::Value::Null)
+                        })
+                        .collect(),
+                )
+            })
             .unwrap_or(serde_json::Value::Null),
-        "INT4RANGE" | "INT8RANGE" | "NUMRANGE" | "TSRANGE" | "TSTZRANGE" | "DATERANGE" => row
-            .try_get::<String, _>(i)
+        "_FLOAT4" => row
+            .try_get::<Vec<Option<f32>>, _>(i)
             .ok()
-            .map(serde_json::Value::String)
+            .map(|arr| {
+                serde_json::Value::Array(
+                    arr.into_iter()
+                        .map(|opt| {
+                            opt.map(|v| serde_json::Value::from(v as f64))
+                                .unwrap_or(serde_json::Value::Null)
+                        })
+                        .collect(),
+                )
+            })
             .unwrap_or(serde_json::Value::Null),
-        "XML" => row
-            .try_get::<String, _>(i)
+        "_FLOAT8" => row
+            .try_get::<Vec<Option<f64>>, _>(i)
             .ok()
-            .map(serde_json::Value::String)
+            .map(|arr| {
+                serde_json::Value::Array(
+                    arr.into_iter()
+                        .map(|opt| {
+                            opt.map(serde_json::Value::from)
+                                .unwrap_or(serde_json::Value::Null)
+                        })
+                        .collect(),
+                )
+            })
             .unwrap_or(serde_json::Value::Null),
-        "BIT" | "VARBIT" => row
-            .try_get::<String, _>(i)
+        "_JSON" | "_JSONB" => row
+            .try_get::<Vec<Option<serde_json::Value>>, _>(i)
             .ok()
-            .map(serde_json::Value::String)
+            .map(|arr| {
+                serde_json::Value::Array(
+                    arr.into_iter()
+                        .map(|opt| opt.unwrap_or(serde_json::Value::Null))
+                        .collect(),
+                )
+            })
             .unwrap_or(serde_json::Value::Null),
         _ if type_str.starts_with('_') => row
             .try_get::<Vec<Option<String>>, _>(i)
@@ -163,27 +229,22 @@ fn sanitize_sql_error(e: &sqlx::Error) -> String {
     URL_RE.replace_all(&msg, "$1<user>:<password>@").to_string()
 }
 
-#[derive(Debug)]
+fn is_valid_identifier(name: &str) -> bool {
+    !name.is_empty()
+        && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+        && name
+            .bytes()
+            .next()
+            .is_some_and(|b| b.is_ascii_alphabetic() || b == b'_')
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
 struct ArgsError(String);
 
-impl std::fmt::Display for ArgsError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl std::error::Error for ArgsError {}
-
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
 struct SqlError(String);
-
-impl std::fmt::Display for SqlError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl std::error::Error for SqlError {}
 
 pub async fn handle_execute_sql(
     state: &AppState,
@@ -243,11 +304,18 @@ pub async fn handle_execute_query(
 
     let rows = match sqlx::query(&args.sql).fetch_all(&mut *tx).await {
         Ok(rows) => {
-            let _ = tx.rollback().await;
+            if let Err(e) = tx.rollback().await {
+                eprintln!("Warning: failed to rollback read-only transaction: {}", e);
+            }
             rows
         }
         Err(e) => {
-            let _ = tx.rollback().await;
+            if let Err(rb_err) = tx.rollback().await {
+                eprintln!(
+                    "Warning: failed to rollback transaction after error: {}",
+                    rb_err
+                );
+            }
             return Err(CallToolError::new(SqlError(sanitize_sql_error(&e))));
         }
     };
@@ -377,34 +445,20 @@ pub async fn handle_list_triggers(
     schema: Option<String>,
 ) -> std::result::Result<CallToolResult, CallToolError> {
     let schema = schema.unwrap_or_else(|| state.default_schema.clone());
-    let rows = if let Some(ref table) = table {
-        sqlx::query(
-            "SELECT t.tgname AS trigger_name, c.relname AS table_name \
-             FROM pg_catalog.pg_trigger t \
-             JOIN pg_catalog.pg_class c ON t.tgrelid = c.oid \
-             JOIN pg_catalog.pg_namespace n ON c.relnamespace = n.oid \
-             WHERE NOT t.tgisinternal \
-               AND n.nspname = $1 AND c.relname = $2 \
-             ORDER BY t.tgname",
-        )
-        .bind(&schema)
-        .bind(table)
-        .fetch_all(&state.pool)
-        .await
-    } else {
-        sqlx::query(
-            "SELECT t.tgname AS trigger_name, c.relname AS table_name \
-             FROM pg_catalog.pg_trigger t \
-             JOIN pg_catalog.pg_class c ON t.tgrelid = c.oid \
-             JOIN pg_catalog.pg_namespace n ON c.relnamespace = n.oid \
-             WHERE NOT t.tgisinternal \
-               AND n.nspname = $1 \
-             ORDER BY t.tgname",
-        )
-        .bind(&schema)
-        .fetch_all(&state.pool)
-        .await
-    }
+    let rows = sqlx::query(
+        "SELECT t.tgname AS trigger_name, c.relname AS table_name \
+         FROM pg_catalog.pg_trigger t \
+         JOIN pg_catalog.pg_class c ON t.tgrelid = c.oid \
+         JOIN pg_catalog.pg_namespace n ON c.relnamespace = n.oid \
+         WHERE NOT t.tgisinternal \
+           AND n.nspname = $1 \
+           AND ($2::text IS NULL OR c.relname = $2) \
+         ORDER BY t.tgname",
+    )
+    .bind(&schema)
+    .bind(table)
+    .fetch_all(&state.pool)
+    .await
     .map_err(CallToolError::new)?;
 
     let result: Vec<serde_json::Value> = rows
@@ -665,6 +719,12 @@ pub async fn handle_get_table_size(
     schema: Option<String>,
 ) -> std::result::Result<CallToolResult, CallToolError> {
     let schema = schema.unwrap_or_else(|| state.default_schema.clone());
+    if !is_valid_identifier(&schema) || !is_valid_identifier(table) {
+        return Err(CallToolError::new(ArgsError(format!(
+            "Invalid schema or table name: {}.{}",
+            schema, table
+        ))));
+    }
     let qualified = format!("{}.{}", schema, table);
     let row = sqlx::query(
         "SELECT \
@@ -794,11 +854,19 @@ pub async fn handle_get_table_row_count(
             ])),
         }
     } else {
-        let qualified = format!("{}.{}", schema, table);
-        let row = sqlx::query(&format!("SELECT COUNT(*) AS count FROM {}", qualified))
-            .fetch_one(&state.pool)
-            .await
-            .map_err(|e| CallToolError::new(SqlError(sanitize_sql_error(&e))))?;
+        if !is_valid_identifier(&schema) || !is_valid_identifier(table) {
+            return Err(CallToolError::new(ArgsError(format!(
+                "Invalid schema or table name: {}.{}",
+                schema, table
+            ))));
+        }
+        let row = sqlx::query(&format!(
+            "SELECT COUNT(*) AS count FROM {}.{}",
+            schema, table
+        ))
+        .fetch_one(&state.pool)
+        .await
+        .map_err(|e| CallToolError::new(SqlError(sanitize_sql_error(&e))))?;
 
         let count: i64 = row.try_get::<i64, _>(0).unwrap_or(0);
         let result = serde_json::json!({

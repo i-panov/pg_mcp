@@ -148,9 +148,13 @@ impl ServerHandler for PgMcpHandler {
 async fn main() -> SdkResult<()> {
     let config =
         load_config().map_err(|e| SdkError::new(SdkErrorCodes::INVALID_PARAMS, e, None))?;
-    let state = AppState::new(config)
-        .await
-        .map_err(|e| SdkError::new(SdkErrorCodes::INTERNAL_ERROR, e.to_string(), None))?;
+    let state = AppState::new(config).await.map_err(|e| {
+        SdkError::new(
+            SdkErrorCodes::INTERNAL_ERROR,
+            format!("Failed to connect to PostgreSQL: {}", e),
+            None,
+        )
+    })?;
 
     let server_info = InitializeResult {
         server_info: Implementation {

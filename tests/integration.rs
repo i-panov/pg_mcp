@@ -144,13 +144,44 @@ async fn test_execute_query_readonly_error() {
 }
 
 #[tokio::test]
-async fn test_permission_mode_restricted() {
+async fn test_readonly_tools_and_permission_modes() {
     let container = TestContainer::new();
-    let state = create_app_state(&container.url, PermissionMode::Restricted).await;
 
-    // Permission enforcement is in PgMcpHandler, not in handle_* functions.
-    // Here we just verify that schema tools work with any permission mode.
+    // Restricted mode: schema tools still work
+    let state_r = create_app_state(&container.url, PermissionMode::Restricted).await;
+    let result = handle_list_tables(&state_r, None).await;
+    assert!(result.is_ok());
+
+    // Readonly mode: execute_query + schema tools work
+    let state_ro = create_app_state(&container.url, PermissionMode::Readonly).await;
+    let args = ExecuteQueryTool {
+        sql: "SELECT 1".to_string(),
+    };
+    let result = handle_execute_query(&state_ro, &args).await;
+    assert!(result.is_ok());
+    let result = handle_list_tables(&state_ro, None).await;
+    assert!(result.is_ok());
+
+    // Unrestricted mode: read-only introspection tools
+    let state = create_app_state(&container.url, PermissionMode::Unrestricted).await;
+
+    let result = handle_list_schemas(&state).await;
+    assert!(result.is_ok());
+    let text = extract_text(&result.unwrap());
+    assert!(text.contains("public"));
+
     let result = handle_list_tables(&state, None).await;
+    assert!(result.is_ok());
+
+    let result = handle_list_extensions(&state).await;
+    assert!(result.is_ok());
+    let text = extract_text(&result.unwrap());
+    assert!(text.contains("plpgsql"));
+
+    let result = handle_list_active_queries(&state).await;
+    assert!(result.is_ok());
+
+    let result = handle_list_locks(&state).await;
     assert!(result.is_ok());
 }
 
@@ -299,7 +330,7 @@ fn extract_text(result: &rust_mcp_sdk::schema::CallToolResult) -> String {
 }
 
 #[tokio::test]
-async fn test_get_view_definition_not_found() {
+async fn test_not_found_responses() {
     let container = TestContainer::new();
     let state = create_app_state(&container.url, PermissionMode::Unrestricted).await;
 
@@ -307,34 +338,16 @@ async fn test_get_view_definition_not_found() {
     assert!(result.is_ok());
     let text = extract_text(&result.unwrap());
     assert!(text.contains("not found"));
-}
-
-#[tokio::test]
-async fn test_get_function_definition_not_found() {
-    let container = TestContainer::new();
-    let state = create_app_state(&container.url, PermissionMode::Unrestricted).await;
 
     let result = handle_get_function_definition(&state, "nonexistent_function", None).await;
     assert!(result.is_ok());
     let text = extract_text(&result.unwrap());
     assert!(text.contains("not found"));
-}
-
-#[tokio::test]
-async fn test_get_table_structure_not_found() {
-    let container = TestContainer::new();
-    let state = create_app_state(&container.url, PermissionMode::Unrestricted).await;
 
     let result = handle_get_table_structure(&state, "nonexistent_table", None).await;
     assert!(result.is_ok());
     let text = extract_text(&result.unwrap());
     assert!(text.contains("nonexistent_table"));
-}
-
-#[tokio::test]
-async fn test_list_indexes_not_found() {
-    let container = TestContainer::new();
-    let state = create_app_state(&container.url, PermissionMode::Unrestricted).await;
 
     let result = handle_list_indexes(&state, "nonexistent_table", None).await;
     assert!(result.is_ok());
@@ -545,13 +558,10 @@ async fn test_sanitize_sql_error_hides_password() {
 }
 
 #[tokio::test]
-async fn test_parse_args_missing_argument() {
+async fn test_parse_args() {
     let result = parse_args::<ExecuteSqlTool>(&None);
     assert!(result.is_err());
-}
 
-#[tokio::test]
-async fn test_parse_args_invalid_argument() {
     let mut args = serde_json::Map::new();
     args.insert("sql".to_string(), serde_json::Value::Number(42.into()));
     let result = parse_args::<ExecuteSqlTool>(&Some(args));
@@ -596,17 +606,6 @@ async fn test_get_table_size() {
 }
 
 #[tokio::test]
-async fn test_list_extensions() {
-    let container = TestContainer::new();
-    let state = create_app_state(&container.url, PermissionMode::Unrestricted).await;
-
-    let result = handle_list_extensions(&state).await;
-    assert!(result.is_ok());
-    let text = extract_text(&result.unwrap());
-    assert!(text.contains("plpgsql"));
-}
-
-#[tokio::test]
 async fn test_list_sequences() {
     let container = TestContainer::new();
     let state = create_app_state(&container.url, PermissionMode::Unrestricted).await;
@@ -623,7 +622,7 @@ async fn test_list_sequences() {
 }
 
 #[tokio::test]
-async fn test_get_table_row_count_exact() {
+async fn test_get_table_row_count() {
     let container = TestContainer::new();
     let state = create_app_state(&container.url, PermissionMode::Unrestricted).await;
 
@@ -637,34 +636,15 @@ async fn test_get_table_row_count_exact() {
     };
     handle_execute_sql(&state, &args).await.unwrap();
 
-    let args = GetTableRowCountTool {
-        table: "test_count".to_string(),
-        schema: None,
-        approximate: Some(false),
-    };
-    let result = handle_get_table_row_count(&state, &args.table, args.schema, false).await;
+    // Exact count
+    let result = handle_get_table_row_count(&state, "test_count", None, false).await;
     assert!(result.is_ok());
     let text = extract_text(&result.unwrap());
     assert!(text.contains("3"));
     assert!(text.contains("\"approximate\": false"));
-}
 
-#[tokio::test]
-async fn test_get_table_row_count_approximate() {
-    let container = TestContainer::new();
-    let state = create_app_state(&container.url, PermissionMode::Unrestricted).await;
-
-    let args = ExecuteSqlTool {
-        sql: "CREATE TABLE test_approx (id SERIAL PRIMARY KEY)".to_string(),
-    };
-    handle_execute_sql(&state, &args).await.unwrap();
-
-    let args = GetTableRowCountTool {
-        table: "test_approx".to_string(),
-        schema: None,
-        approximate: Some(true),
-    };
-    let result = handle_get_table_row_count(&state, &args.table, args.schema, true).await;
+    // Approximate count
+    let result = handle_get_table_row_count(&state, "test_count", None, true).await;
     assert!(result.is_ok());
     let text = extract_text(&result.unwrap());
     assert!(text.contains("\"approximate\": true"));
