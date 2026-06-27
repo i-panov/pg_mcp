@@ -36,6 +36,12 @@ pub struct Config {
     pub permission_mode: PermissionMode,
     #[serde(default = "default_max_connections")]
     pub max_connections: u32,
+    #[serde(default = "default_max_result_rows")]
+    pub max_result_rows: u32,
+}
+
+fn default_max_result_rows() -> u32 {
+    1000
 }
 
 fn default_schema() -> String {

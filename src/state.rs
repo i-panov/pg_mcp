@@ -8,6 +8,7 @@ pub struct AppState {
     pub pool: PgPool,
     pub default_schema: String,
     pub permission_mode: PermissionMode,
+    pub max_result_rows: u32,
 }
 
 impl AppState {
@@ -22,6 +23,7 @@ impl AppState {
             pool,
             default_schema: config.default_schema,
             permission_mode: config.permission_mode,
+            max_result_rows: config.max_result_rows,
         })
     }
 }

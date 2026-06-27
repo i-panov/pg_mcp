@@ -23,10 +23,11 @@ and `sqlx` with `PgPool`. Configuration via `figment` from `.env` or environment
 src/
   lib.rs         — public library: handler functions, parse_args, row_to_json_value, sanitize_sql_error
   main.rs        — entry point, PgMcpHandler (ServerHandler impl), MCP server bootstrap
-  config.rs      — figment-based Config (DATABASE_URL, DEFAULT_SCHEMA, PERMISSION_MODE, MAX_CONNECTIONS)
-  state.rs       — AppState { pool, default_schema, permission_mode }
-  tools/
+  config.rs      — figment-based Config (DATABASE_URL, DEFAULT_SCHEMA, PERMISSION_MODE, MAX_CONNECTIONS, MAX_RESULT_ROWS)
+  state.rs       — AppState { pool, default_schema, permission_mode, max_result_rows }
+  tools/         — MCP tool definitions (one struct per tool via mcp_tool macro)
     mod.rs       — re-exports all tools
+    analyze.rs   — explain, table row count, active queries, locks
     execute_sql.rs
     execute_query.rs
     schema.rs    — list_schemas, list_tables, list_views, list_materialized_views, list_routines,
@@ -72,6 +73,7 @@ DATABASE_URL=postgres://user:pass@localhost:5432/db
 DEFAULT_SCHEMA=public
 PERMISSION_MODE=restricted  # unrestricted | readonly | restricted
 MAX_CONNECTIONS=5           # optional, default 5
+MAX_RESULT_ROWS=1000
 ```
 
 ## Git

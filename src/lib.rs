@@ -1,4 +1,7 @@
+#![deny(unsafe_code)]
+
 pub mod config;
+pub mod error;
 pub mod state;
 pub mod tools;
 
@@ -9,6 +12,36 @@ use state::AppState;
 use std::str::FromStr;
 use std::sync::LazyLock;
 use tools::*;
+
+pub fn quote_identifier(name: &str) -> String {
+    format!("\"{}\"", name.replace('"', "\"\""))
+}
+
+pub fn strip_leading_sql_noise(sql: &str) -> &str {
+    let bytes = sql.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i].is_ascii_whitespace() {
+            i += 1;
+        } else if bytes[i] == b'-' && i + 1 < bytes.len() && bytes[i + 1] == b'-' {
+            i += 2;
+            while i < bytes.len() && bytes[i] != b'\n' {
+                i += 1;
+            }
+        } else if bytes[i] == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'*' {
+            i += 2;
+            while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                i += 1;
+            }
+            if i < bytes.len() {
+                i += 2;
+            }
+        } else {
+            break;
+        }
+    }
+    &sql[i..]
+}
 
 pub fn parse_args<T: for<'de> serde::Deserialize<'de>>(
     arguments: &Option<serde_json::Map<String, serde_json::Value>>,
@@ -250,15 +283,18 @@ pub async fn handle_execute_sql(
     state: &AppState,
     args: &ExecuteSqlTool,
 ) -> std::result::Result<CallToolResult, CallToolError> {
-    let trimmed = args.sql.trim_start();
-    let is_select =
-        trimmed.to_uppercase().starts_with("SELECT") || trimmed.to_uppercase().starts_with("WITH");
+    let effective = strip_leading_sql_noise(&args.sql);
+    let is_select = effective.to_uppercase().starts_with("SELECT")
+        || effective.to_uppercase().starts_with("WITH");
 
     if is_select {
-        let rows = sqlx::query(&args.sql)
+        let mut rows = sqlx::query(&args.sql)
             .fetch_all(&state.pool)
             .await
             .map_err(|e| CallToolError::new(SqlError(sanitize_sql_error(&e))))?;
+
+        let limit = state.max_result_rows as usize;
+        rows.truncate(limit);
 
         if rows.is_empty() {
             return Ok(CallToolResult::text_content(vec!["0 rows returned".into()]));
@@ -302,7 +338,7 @@ pub async fn handle_execute_query(
         .await
         .map_err(CallToolError::new)?;
 
-    let rows = match sqlx::query(&args.sql).fetch_all(&mut *tx).await {
+    let mut rows = match sqlx::query(&args.sql).fetch_all(&mut *tx).await {
         Ok(rows) => {
             if let Err(e) = tx.rollback().await {
                 eprintln!("Warning: failed to rollback read-only transaction: {}", e);
@@ -319,6 +355,9 @@ pub async fn handle_execute_query(
             return Err(CallToolError::new(SqlError(sanitize_sql_error(&e))));
         }
     };
+
+    let limit = state.max_result_rows as usize;
+    rows.truncate(limit);
 
     if rows.is_empty() {
         return Ok(CallToolResult::text_content(vec!["0 rows returned".into()]));
@@ -860,13 +899,11 @@ pub async fn handle_get_table_row_count(
                 schema, table
             ))));
         }
-        let row = sqlx::query(&format!(
-            "SELECT COUNT(*) AS count FROM {}.{}",
-            schema, table
-        ))
-        .fetch_one(&state.pool)
-        .await
-        .map_err(|e| CallToolError::new(SqlError(sanitize_sql_error(&e))))?;
+        let qualified = format!("{}.{}", quote_identifier(&schema), quote_identifier(table));
+        let row = sqlx::query(&format!("SELECT COUNT(*) AS count FROM {}", qualified))
+            .fetch_one(&state.pool)
+            .await
+            .map_err(|e| CallToolError::new(SqlError(sanitize_sql_error(&e))))?;
 
         let count: i64 = row.try_get::<i64, _>(0).unwrap_or(0);
         let result = serde_json::json!({
